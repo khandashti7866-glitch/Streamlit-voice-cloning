@@ -1,7 +1,7 @@
-streamlit
-TTS>=0.21.0
-torch
-torchaudio
-numpy
+streamlit>=1.24.0
+torch==2.0.1+cpu
+torchaudio==2.0.2+cpu
+TTS==0.14.0
+numpy>=1.23
 soundfile
 pydub
