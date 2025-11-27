@@ -1,0 +1,7 @@
+streamlit
+TTS
+torch
+torchaudio
+numpy
+soundfile
+pydub
