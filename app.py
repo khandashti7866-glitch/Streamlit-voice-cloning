@@ -1,224 +1,196 @@
 import os
-import io
 import tempfile
-import traceback
 from pathlib import Path
-
-import streamlit as st
-from streamlit.runtime.scriptrunner import add_script_run_ctx
-
+import traceback
 import numpy as np
-import soundfile as sf
-
+import streamlit as st
 from pydub import AudioSegment
-
-# Coqui TTS high-level API
+import soundfile as sf
 from TTS.api import TTS
 
-# ---------------------
-# Configuration
-# ---------------------
-GENERATED_DIR = Path("/tmp/voice_cloning_outputs")
-GENERATED_DIR.mkdir(parents=True, exist_ok=True)
-ALLOWED_EXT = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus"}
-MAX_UPLOAD_MB = 25  # safety limit for uploads
+# ------------------------------
+# CONFIG
+# ------------------------------
+OUTPUT_DIR = Path("generated_audio")
+OUTPUT_DIR.mkdir(exist_ok=True)
 
-# ---------------------
-# Utilities
-# ---------------------
-def sizeof_fmt(num, suffix="B"):
-    for unit in ["", "K", "M", "G", "T", "P"]:
-        if abs(num) < 1024.0:
-            return f"{num:3.1f}{unit}{suffix}"
-        num /= 1024.0
-    return f"{num:.1f}Y{suffix}"
+ALLOWED = [".wav", ".mp3", ".ogg", ".flac", ".m4a"]
+MAX_MB = 30
+TARGET_SR = 24000  # Good quality + low RAM
 
-def safe_save_uploaded_file(uploaded_file) -> Path:
-    """
-    Save a Streamlit UploadedFile to a temporary path and return the Path.
-    Also validate extension and size.
-    """
-    if uploaded_file is None:
-        raise ValueError("No file uploaded.")
+# ------------------------------
+# UTILITIES
+# ------------------------------
+def save_uploaded(file):
+    ext = Path(file.name).suffix.lower()
+    if ext not in ALLOWED:
+        raise ValueError("Unsupported file type")
 
-    fname = uploaded_file.name
-    ext = Path(fname).suffix.lower()
-    if ext not in ALLOWED_EXT:
-        raise ValueError(f"Unsupported file extension: {ext}. Allowed: {', '.join(ALLOWED_EXT)}")
+    file.seek(0, 2)
+    size = file.tell()
+    file.seek(0)
 
-    uploaded_file.seek(0, io.SEEK_END)
-    size = uploaded_file.tell()
-    uploaded_file.seek(0)
-    if size > MAX_UPLOAD_MB * 1024 * 1024:
-        raise ValueError(f"File too large: {sizeof_fmt(size)} (limit {MAX_UPLOAD_MB} MB)")
+    if size > MAX_MB * 1024 * 1024:
+        raise ValueError("File too large")
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
-    tmp.write(uploaded_file.read())
-    tmp.flush()
+    tmp.write(file.read())
     tmp.close()
+
     return Path(tmp.name)
 
-def convert_to_wav(in_path: Path, target_rate: int = 22050) -> Path:
-    """
-    Convert audio to WAV (PCM 16) using pydub and return new Path.
-    Ensures sample rate is reasonable for TTS speaker embedding.
-    """
-    audio = AudioSegment.from_file(in_path.as_posix())
-    audio = audio.set_frame_rate(target_rate).set_channels(1).set_sample_width(2)  # 16-bit mono
-    out_path = Path(tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name)
-    audio.export(out_path.as_posix(), format="wav")
-    return out_path
 
-# ---------------------
-# Model loading (cached)
-# ---------------------
-@st.cache_resource(show_spinner=False)
-def load_tts_model(model_name: str = "tts_models/multilingual/multi-dataset/vits"):
-    """
-    Load Coqui TTS model. Cached to avoid reloading on each interaction.
-    By default uses a VITS multilingual model supporting speaker_wav cloning.
-    """
-    try:
-        tts = TTS(model_name)  # will download models if not present
-        return tts
-    except Exception as e:
-        raise RuntimeError(f"Failed to load TTS model '{model_name}': {e}")
+def convert_to_wav(path: Path, sr=TARGET_SR):
+    audio = AudioSegment.from_file(path)
+    audio = audio.set_frame_rate(sr).set_channels(1).set_sample_width(2)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    audio.export(tmp.name, format="wav")
+    return Path(tmp.name)
 
-# ---------------------
-# Main app UI
-# ---------------------
-st.set_page_config(
-    page_title="Instant Voice Cloning + TTS",
-    layout="centered",
-    initial_sidebar_state="expanded",
-)
 
-# Header
-st.title("Instant Voice Cloning — Text → Speech")
+def sanitize(text: str):
+    return "".join(c for c in text if c.isalnum() or c in "_-")[:40]
+
+
+# ------------------------------
+# LOAD LIGHTWEIGHT XTTS MODEL
+# ------------------------------
+@st.cache_resource
+def load_model():
+    MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+    return TTS(model_name=MODEL_NAME)
+
+
+# ------------------------------
+# DARK PREMIUM UI STYLING
+# ------------------------------
+st.set_page_config(page_title="8GB Premium Voice Cloner", layout="centered")
 st.markdown(
     """
-A beginner-friendly offline demo using **Coqui TTS** (VITS multi-speaker).
-Upload a short voice sample (WAV/MP3), type text, and press **Generate Voice**.
-"""
+    <style>
+    /* Dark background */
+    .reportview-container, .main {
+        background-color: #0E1117;
+        color: #FFFFFF;
+        font-family: 'Segoe UI', sans-serif;
+    }
+    /* Glass panels */
+    .stFileUploader, .stTextArea, .stButton {
+        background: rgba(255,255,255,0.05);
+        border-radius: 15px;
+        padding: 10px;
+        border: 1px solid rgba(255,255,255,0.2);
+        color: #FFFFFF;
+    }
+    /* Button styling */
+    div.stButton > button {
+        background-color: #1F6FEB;
+        color: #fff;
+        border-radius: 12px;
+        height: 45px;
+        width: 100%;
+        font-weight: bold;
+        border: none;
+    }
+    div.stButton > button:hover {
+        background-color: #4791FF;
+        color: #fff;
+    }
+    /* Sidebar styling */
+    .sidebar .sidebar-content {
+        background-color: #12151C;
+        color: #FFFFFF;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
-# Sidebar controls
+st.title("🎤 Instant Voice Cloning — Dark Premium UI")
+st.markdown(
+    "<p style='color:#AAAAAA'>Upload voice → Enter text → Clone instantly. Works on 8GB RAM. No API key required.</p>",
+    unsafe_allow_html=True
+)
+
+# ------------------------------
+# Sidebar Settings
+# ------------------------------
 st.sidebar.header("Settings")
-model_choice = st.sidebar.selectbox(
-    "TTS Model (pretrained)",
-    options=[
-        "tts_models/multilingual/multi-dataset/vits",
-        "tts_models/en/vctk/vits",
-        "tts_models/en/ljspeech/tacotron2-DDC"  # fallback (single speaker) if needed
-    ],
-    index=0,
-    help="Select a pretrained TTS model. Multilingual VITS supports speaker cloning via `speaker_wav`."
-)
+output_sample_rate = st.sidebar.selectbox("Output Sample Rate", [22050, 24000], index=1)
+trim_sec = st.sidebar.slider("Trim Uploaded Audio (sec)", 2, 12, 6)
 
-sample_rate = st.sidebar.selectbox("Generated audio sample rate", options=[22050, 24000, 44100], index=0)
-quality = st.sidebar.selectbox("Quality / Vocoder", options=["default", "high"], index=0)
+# ------------------------------
+# Load Model
+# ------------------------------
+model = None
+with st.spinner("Loading lightweight XTTS model… (first run may take ~20–40s)"):
+    model = load_model()
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("Tips:\n- Upload 3–10 seconds of clear speech for best cloning.\n- Larger uploads may take longer to process.\n- Streamlit Cloud may require more memory for model download.")
+# ------------------------------
+# Upload Section
+# ------------------------------
+st.subheader("1) Upload Voice Sample")
+voice_file = st.file_uploader("Upload WAV/MP3/OGG/FLAC/M4A", type=["wav", "mp3", "ogg", "flac", "m4a"])
 
-# Upload voice sample
-st.subheader("1) Upload a voice sample")
-uploaded = st.file_uploader("Upload WAV/MP3 (3-10s recommended)", type=["wav", "mp3", "m4a", "flac", "ogg", "opus"])
-upload_info = st.empty()
-if uploaded is not None:
+speaker_path = None
+if voice_file:
     try:
-        p = safe_save_uploaded_file(uploaded)
-        display_text = f"Saved uploaded file: **{Path(uploaded.name).name}** — {sizeof_fmt(p.stat().st_size)}"
-        upload_info.success(display_text)
+        raw_path = save_uploaded(voice_file)
+        speaker_path = convert_to_wav(raw_path)
+        st.success(f"Uploaded: {voice_file.name}")
+        st.audio(speaker_path.read_bytes())
     except Exception as e:
-        upload_info.error(f"Upload error: {e}")
-        uploaded = None
+        st.error(str(e))
 
-# Text to synthesize
-st.subheader("2) Enter text to synthesize")
-default_text = "Hello! This is a quick voice cloning demo. Change this text and press Generate Voice."
-text_input = st.text_area("Text to convert to speech", value=default_text, height=140)
+# ------------------------------
+# Text Input
+# ------------------------------
+st.subheader("2) Enter Text")
+text = st.text_area("Text to clone", "Hello! This is my cloned voice.", height=150)
 
-# Generate button
-generate_col, demo_col = st.columns([1, 1])
-with generate_col:
-    generate_btn = st.button("🎙️ Generate Voice", key="generate_btn")
-
-with demo_col:
-    # Show last generated file if exists
-    existing = sorted(GENERATED_DIR.glob("generated_*.wav"), key=os.path.getmtime, reverse=True)
-    if existing:
-        latest = existing[0]
-        st.audio(latest.read_bytes(), format="audio/wav")
-        st.caption(f"Last generated: {latest.name}")
-
-# Space for logs/errors/output
-status = st.empty()
-player = st.empty()
-
-# Load the TTS model (on demand, cached)
-model_load_col = st.container()
-with model_load_col:
-    with st.spinner("Loading TTS model (this may take a while on first run)..."):
-        try:
-            tts_model = load_tts_model(model_choice)
-        except Exception as e:
-            status.error(f"Model load failed: {e}")
-            st.stop()
-
-# Run generation when button pressed
-if generate_btn:
-    if uploaded is None:
-        status.error("Please upload a voice sample before generating.")
-    elif not text_input.strip():
-        status.error("Please enter text to synthesize.")
+# ------------------------------
+# Generate Voice Button
+# ------------------------------
+if st.button("🎯 Generate Voice"):
+    if not speaker_path:
+        st.error("Please upload a voice first.")
+    elif not text.strip():
+        st.error("Please enter text.")
     else:
         try:
-            status.info("Preparing uploaded audio...")
-            uploaded_path = Path(p)
-            # Convert uploaded file to wav suitable for speaker embedding
-            speaker_wav = convert_to_wav(uploaded_path, target_rate=sample_rate)
-            status.info(f"Prepared speaker file: {speaker_wav.name}")
+            with st.spinner("Cloning voice…"):
 
-            # Compose output filename
-            safe_text = "".join(c for c in text_input if c.isalnum() or c.isspace())[:40].strip()
-            out_name = GENERATED_DIR / f"generated_{safe_text[:20].replace(' ', '_') or 'speech'}.wav"
+                # Trim speaker audio
+                data, sr = sf.read(speaker_path)
+                if len(data) / sr > trim_sec:
+                    data = data[: int(trim_sec * sr)]
+                    temp_trim = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                    sf.write(temp_trim.name, data, sr)
+                    speaker_wav = temp_trim.name
+                else:
+                    speaker_wav = speaker_path.as_posix()
 
-            status.info("Running TTS inference (this may take a while)...")
-            with st.spinner("Synthesizing audio..."):
-                # Some models accept speaker_wav parameter to clone voice. Use tts_model.tts_to_file API.
-                # The API will handle model-specific vocoder/synthesis internally.
-                # Note: on single-speaker models, speaker_wav may be ignored.
-                tts_model.tts_to_file(
-                    text=text_input,
-                    speaker_wav=speaker_wav.as_posix(),
-                    file_path=out_name.as_posix(),
+                # Output path
+                fname = sanitize(text)
+                out_path = OUTPUT_DIR / f"{fname}_output.wav"
+
+                # Generate voice
+                model.tts_to_file(
+                    text=text,
+                    speaker_wav=speaker_wav,
+                    file_path=str(out_path)
                 )
 
-            # Validate output file exists
-            if not out_name.exists():
-                raise RuntimeError("Expected output file was not created by the TTS model.")
-
-            # Ensure sample rate and format
-            data, sr = sf.read(out_name.as_posix(), dtype="int16")
-            if sr != sample_rate:
-                temp_out = GENERATED_DIR / f"generated_resampled_{out_name.name}"
-                sf.write(temp_out.as_posix(), data, sample_rate, subtype="PCM_16")
-                out_name = temp_out
-
-            # Display player and file download
-            player.audio(out_name.read_bytes(), format="audio/wav")
-            status.success(f"Generated audio saved to: {out_name.as_posix()}")
-            st.download_button(
-                label="⬇️ Download WAV",
-                data=out_name.read_bytes(),
-                file_name=out_name.name,
-                mime="audio/wav",
-            )
+            st.success("✅ Voice generated successfully!")
+            st.audio(out_path.read_bytes())
+            st.download_button("⬇ Download WAV", out_path.read_bytes(), file_name=out_path.name)
 
         except Exception as e:
-            tb = traceback.format_exc()
-            status.error(f"Generation failed: {e}")
-            # Provide collapsible traceback for advanced users
-            with st.expander("Show error details"):
-                st.text(tb)
+            st.error("Generation failed.")
+            st.code(traceback.format_exc())
+
+# ------------------------------
+# Footer
+# ------------------------------
+st.markdown("---")
+st.caption("🎨 Dark Premium UI — Optimized XTTS-v2 Voice Cloner for 8GB RAM")
