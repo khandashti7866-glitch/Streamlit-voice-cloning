@@ -79,20 +79,16 @@ def load_model_safe():
 st.set_page_config(page_title="8GB Premium Voice Cloner", layout="centered")
 st.markdown("""
 <style>
-/* Dark background */
 .reportview-container, .main { background-color: #0E1117; color: #FFFFFF; font-family: 'Segoe UI', sans-serif; }
-/* Glass panels */
 .stFileUploader, .stTextArea, .stButton { background: rgba(255,255,255,0.05); border-radius: 15px; padding:10px; border:1px solid rgba(255,255,255,0.2); color:#FFFFFF;}
-/* Buttons */
 div.stButton > button { background-color:#1F6FEB;color:#fff;border-radius:12px;height:45px;width:100%;font-weight:bold;border:none;}
 div.stButton > button:hover { background-color:#4791FF;color:#fff;}
-/* Sidebar */
 .sidebar .sidebar-content { background-color:#12151C; color:#FFFFFF; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🎤 Instant Voice Cloning — Dark Premium UI")
-st.markdown("<p style='color:#AAAAAA'>Upload voice → Enter text → Clone instantly. Optimized for 8GB RAM. No API key needed.</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#AAAAAA'>Upload voice → Enter text → Clone instantly. Optimized for 8GB RAM. CPU-only.</p>", unsafe_allow_html=True)
 
 # ------------------------------
 # Sidebar Settings
@@ -107,7 +103,7 @@ trim_sec = st.sidebar.slider("Trim Uploaded Audio (sec)", 2, 12, 6)
 with st.spinner("Loading lightweight XTTS model… (first run may take ~20–40s)"):
     model = load_model_safe()
 if model is None:
-    st.stop()  # Stop app if model fails
+    st.stop()
 
 # ------------------------------
 # Upload Section
@@ -173,8 +169,5 @@ if st.button("🎯 Generate Voice"):
             st.error(f"Generation failed: {e}")
             st.code(traceback.format_exc())
 
-# ------------------------------
-# Footer
-# ------------------------------
 st.markdown("---")
-st.caption("🎨 Dark Premium UI — Optimized XTTS-v2 Voice Cloner for 8GB RAM")
+st.caption("🎨 Dark Premium UI — Optimized XTTS-v2 Voice Cloner for 8GB RAM (CPU-only)")
